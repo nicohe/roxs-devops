@@ -74,7 +74,7 @@ jobs:
       - name: Prepare environment file
         run: cp .env.example .env
       - name: Start application stack
-        run: docker compose -f docker-compose.yml up -d --build
+        run: docker compose -p roxs-voting-dev -f docker-compose.yml up -d --build
       - name: Run smoke and health checks
         run: |
           chmod +x scripts/health-check.sh
@@ -82,10 +82,10 @@ jobs:
           curl -fsS -X POST http://localhost/ -d 'vote=a' >/dev/null
       - name: Collect compose status on failure
         if: failure()
-        run: docker compose -f docker-compose.yml ps
+        run: docker compose -p roxs-voting-dev -f docker-compose.yml ps
       - name: Stop application stack
         if: always()
-        run: docker compose -f docker-compose.yml down -v
+        run: docker compose -p roxs-voting-dev -f docker-compose.yml down -v
 
   docker-build-and-push:
     runs-on: ubuntu-latest
