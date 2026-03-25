@@ -6,8 +6,12 @@ import socket
 import time
 import threading
 import psycopg2
-from flask import Flask, g, jsonify, make_response, render_template, request
-from prometheus_client import Counter, Gauge, generate_latest, Histogram, CONTENT_TYPE_LATEST
+from flask import (
+    Flask, g, jsonify, make_response, render_template, request
+)
+from prometheus_client import (
+    Counter, Gauge, generate_latest, Histogram, CONTENT_TYPE_LATEST
+)
 from prometheus_flask_exporter import PrometheusMetrics
 from redis import Redis
 
@@ -86,6 +90,7 @@ def get_redis():
             raise
     return g.redis
 
+
 def get_pg_conn():
     try:
         conn = psycopg2.connect(
@@ -101,6 +106,7 @@ def get_pg_conn():
         database_connection_status.set(0)
         return None
 
+
 def update_database_metrics():
     """Update Prometheus metrics with current database state"""
     try:
@@ -108,34 +114,40 @@ def update_database_metrics():
         if conn:
             cur = conn.cursor()
             # Usar la consulta correcta para contar votos
-            cur.execute("SELECT vote, COUNT(*) FROM votes GROUP BY vote;")
+            cur.execute(
+                "SELECT vote, COUNT(*) FROM votes GROUP BY vote;"
+            )
             rows = cur.fetchall()
-            
+
             cats_votes = 0
             dogs_votes = 0
             total_votes = 0
-            
+
             for vote, count in rows:
                 total_votes += count
                 if vote == 'a':
                     cats_votes = count
                 elif vote == 'b':
                     dogs_votes = count
-            
-            # Update Prometheus gauges - usar labels consistentes con votes_total
+
+            # Update Prometheus gauges
             database_votes_by_option.labels(option='a').set(cats_votes)
             database_votes_by_option.labels(option='b').set(dogs_votes)
             total_votes_in_db.set(total_votes)
-            
+
             cur.close()
             conn.close()
-            
+
             # Log para debug
-            app.logger.info(f'Metrics updated: Cats={cats_votes}, Dogs={dogs_votes}, Total={total_votes}')
-            
+            app.logger.info(
+                f'Metrics updated: Cats={cats_votes}, '
+                f'Dogs={dogs_votes}, Total={total_votes}'
+            )
+
     except Exception as e:
         app.logger.error(f'Error updating database metrics: {e}')
         database_connection_status.set(0)
+
 
 def metrics_updater():
     """Background thread to update metrics every 10 seconds"""
@@ -152,11 +164,12 @@ def metrics_updater():
 metrics_thread = threading.Thread(target=metrics_updater, daemon=True)
 metrics_thread.start()
 
+
 # Main route
 @app.route("/", methods=['POST', 'GET'])
 def hello():
     global session_count
-    
+
     voter_id = request.cookies.get('voter_id')
     if not voter_id:
         voter_id = hex(random.getrandbits(64))[2:-1]
@@ -172,21 +185,26 @@ def hello():
                 redis = get_redis()
                 vote = request.form['vote']
                 app.logger.info('Received vote for %s', vote)
-                
-                # Determine vote type for metrics - mantener consistencia
-                vote_type = 'a' if vote == 'a' else 'b' if vote == 'b' else 'unknown'
-                
+
+                # Determine vote type for metrics
+                if vote == 'a':
+                    vote_type = 'a'
+                elif vote == 'b':
+                    vote_type = 'b'
+                else:
+                    vote_type = 'unknown'
+
                 data = json.dumps({'voter_id': voter_id, 'vote': vote})
                 redis.rpush('votes', data)
-                
+
                 # Increment vote counter
                 votes_counter.labels(vote_type=vote_type).inc()
-                
+
                 app.logger.info(f'Vote processed: {vote_type}')
-                
+
                 # Force metrics update after vote
                 update_database_metrics()
-                
+
             except Exception as e:
                 app.logger.error(f'Error processing vote: {e}')
                 redis_connection_status.set(0)
@@ -201,16 +219,20 @@ def hello():
     resp.set_cookie('voter_id', voter_id)
     return resp
 
+
 # Metrics route
 @app.route("/metrics")
 def metrics_endpoint():
     try:
         # Update database metrics before serving
         update_database_metrics()
-        return generate_latest(), 200, {'Content-Type': CONTENT_TYPE_LATEST}
+        return (
+            generate_latest(), 200, {'Content-Type': CONTENT_TYPE_LATEST}
+        )
     except Exception as e:
         app.logger.error(f'Error generating metrics: {e}')
         return "Error generating metrics", 500
+
 
 @app.route("/stats")
 def stats():
@@ -246,6 +268,7 @@ def stats():
         'current_options': current_options
     })
 
+
 @app.route("/healthz")
 def healthz():
     """Health check endpoint"""
@@ -255,10 +278,10 @@ def healthz():
         redis.ping()
         redis_status = "OK"
         redis_connection_status.set(1)
-    except:
+    except Exception:
         redis_status = "FAILED"
         redis_connection_status.set(0)
-    
+
     try:
         # Test Database connection
         conn = get_pg_conn()
@@ -267,9 +290,9 @@ def healthz():
             db_status = "OK"
         else:
             db_status = "FAILED"
-    except:
+    except Exception:
         db_status = "FAILED"
-    
+
     return jsonify({
         "status": "OK",
         "service": "vote-service",
@@ -277,6 +300,7 @@ def healthz():
         "redis": redis_status,
         "database": db_status
     })
+
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=80, debug=True, threaded=True)
