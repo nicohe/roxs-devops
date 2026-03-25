@@ -76,6 +76,7 @@ app.logger.setLevel(logging.INFO)
 # Track sessions
 session_count = 0
 
+
 # Redis connection
 def get_redis():
     if not hasattr(g, 'redis'):
@@ -159,6 +160,7 @@ def metrics_updater():
         except Exception as e:
             app.logger.error(f'Error in metrics updater: {e}')
             time.sleep(10)
+
 
 # Start background metrics updater
 metrics_thread = threading.Thread(target=metrics_updater, daemon=True)
