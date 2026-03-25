@@ -1,0 +1,66 @@
+name: Deploy Staging
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'develop'
+      )
+    runs-on:
+      - self-hosted
+      - staging
+    environment: staging
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref || github.event.workflow_run.head_sha }}
+      - name: Prepare environment file
+        env:
+          STAGING_DATABASE_USER: ${{ secrets.STAGING_DATABASE_USER }}
+          STAGING_DATABASE_PASSWORD: ${{ secrets.STAGING_DATABASE_PASSWORD }}
+          STAGING_DATABASE_NAME: ${{ secrets.STAGING_DATABASE_NAME }}
+          STAGING_OPTION_A: ${{ vars.STAGING_OPTION_A }}
+          STAGING_OPTION_B: ${{ vars.STAGING_OPTION_B }}
+        run: |
+          cat > .env <<EOF
+          REDIS_HOST=redis
+          REDIS_PORT=6379
+          DATABASE_HOST=database
+          DATABASE_USER=${STAGING_DATABASE_USER:-postgres}
+          DATABASE_PASSWORD=${STAGING_DATABASE_PASSWORD:-postgres}
+          DATABASE_NAME=${STAGING_DATABASE_NAME:-votes}
+          OPTION_A=${STAGING_OPTION_A:-Cats}
+          OPTION_B=${STAGING_OPTION_B:-Dogs}
+          EOF
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Deploy staging stack
+        env:
+          VOTE_IMAGE: ghcr.io/${{ github.repository_owner }}/roxs-devops-project90-vote:staging
+          RESULT_IMAGE: ghcr.io/${{ github.repository_owner }}/roxs-devops-project90-result:staging
+          WORKER_IMAGE: ghcr.io/${{ github.repository_owner }}/roxs-devops-project90-worker:staging
+        run: |
+          chmod +x scripts/deploy.sh scripts/health-check.sh scripts/backup.sh
+          ./scripts/deploy.sh staging
+          ./scripts/health-check.sh staging

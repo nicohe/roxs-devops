@@ -1,0 +1,69 @@
+name: Deploy Production
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+    runs-on:
+      - self-hosted
+      - production
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref || github.event.workflow_run.head_sha }}
+      - name: Prepare environment file
+        env:
+          PRODUCTION_DATABASE_USER: ${{ secrets.PRODUCTION_DATABASE_USER }}
+          PRODUCTION_DATABASE_PASSWORD: ${{ secrets.PRODUCTION_DATABASE_PASSWORD }}
+          PRODUCTION_DATABASE_NAME: ${{ secrets.PRODUCTION_DATABASE_NAME }}
+          PRODUCTION_OPTION_A: ${{ vars.PRODUCTION_OPTION_A }}
+          PRODUCTION_OPTION_B: ${{ vars.PRODUCTION_OPTION_B }}
+        run: |
+          cat > .env <<EOF
+          REDIS_HOST=redis
+          REDIS_PORT=6379
+          DATABASE_HOST=database
+          DATABASE_USER=${PRODUCTION_DATABASE_USER:-postgres}
+          DATABASE_PASSWORD=${PRODUCTION_DATABASE_PASSWORD:-postgres}
+          DATABASE_NAME=${PRODUCTION_DATABASE_NAME:-votes}
+          OPTION_A=${PRODUCTION_OPTION_A:-Cats}
+          OPTION_B=${PRODUCTION_OPTION_B:-Dogs}
+          EOF
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Backup production database
+        run: |
+          chmod +x scripts/deploy.sh scripts/health-check.sh scripts/backup.sh
+          ./scripts/backup.sh production
+      - name: Deploy production stack
+        env:
+          VOTE_IMAGE: ghcr.io/${{ github.repository_owner }}/roxs-devops-project90-vote:production
+          RESULT_IMAGE: ghcr.io/${{ github.repository_owner }}/roxs-devops-project90-result:production
+          WORKER_IMAGE: ghcr.io/${{ github.repository_owner }}/roxs-devops-project90-worker:production
+        run: |
+          ./scripts/deploy.sh production
+          ./scripts/health-check.sh production

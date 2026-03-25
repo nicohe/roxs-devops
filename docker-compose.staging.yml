@@ -1,0 +1,27 @@
+services:
+  vote:
+    image: ${VOTE_IMAGE:-ghcr.io/roxsross/roxs-devops-project90-vote:staging}
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  worker:
+    image: ${WORKER_IMAGE:-ghcr.io/roxsross/roxs-devops-project90-worker:staging}
+    restart: unless-stopped
+
+  result:
+    image: ${RESULT_IMAGE:-ghcr.io/roxsross/roxs-devops-project90-result:staging}
+    ports:
+      - "8081:3000"
+    restart: unless-stopped
+
+  redis:
+    restart: unless-stopped
+
+  database:
+    restart: unless-stopped
+    volumes:
+      - pgdata_staging:/var/lib/postgresql/data
+
+volumes:
+  pgdata_staging:

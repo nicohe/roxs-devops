@@ -1,0 +1,43 @@
+name: Health Check
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Entorno a verificar
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+jobs:
+  staging:
+    if: github.event_name == 'schedule' || github.event.inputs.target == 'staging'
+    runs-on:
+      - self-hosted
+      - staging
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare environment file
+        run: cp .env.example .env
+      - name: Ensure helper scripts are executable
+        run: chmod +x scripts/health-check.sh
+      - name: Run staging health checks
+        run: ./scripts/health-check.sh staging
+
+  production:
+    if: github.event_name == 'schedule' || github.event.inputs.target == 'production'
+    runs-on:
+      - self-hosted
+      - production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare environment file
+        run: cp .env.example .env
+      - name: Ensure helper scripts are executable
+        run: chmod +x scripts/health-check.sh
+      - name: Run production health checks
+        run: ./scripts/health-check.sh production

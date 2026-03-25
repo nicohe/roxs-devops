@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+  pull_request:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/roxs-devops-project90
+
+jobs:
+  vote-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: roxs-voting-app/vote
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run lint
+        run: python tests/lint_test.py
+      - name: Run tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+  result-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: roxs-voting-app/result
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install
+      - name: Run tests
+        run: npm test
+
+  worker-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: roxs-voting-app/worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install
+      - name: Run tests
+        run: npm test
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs:
+      - vote-tests
+      - result-tests
+      - worker-tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare environment file
+        run: cp .env.example .env
+      - name: Start application stack
+        run: docker compose -f docker-compose.yml up -d --build
+      - name: Run smoke and health checks
+        run: |
+          chmod +x scripts/health-check.sh
+          ./scripts/health-check.sh development
+          curl -fsS -X POST http://localhost/ -d 'vote=a' >/dev/null
+      - name: Collect compose status on failure
+        if: failure()
+        run: docker compose -f docker-compose.yml ps
+      - name: Stop application stack
+        if: always()
+        run: docker compose -f docker-compose.yml down -v
+
+  docker-build-and-push:
+    runs-on: ubuntu-latest
+    needs:
+      - integration-tests
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: vote
+            context: ./roxs-voting-app/vote
+          - service: result
+            context: ./roxs-voting-app/result
+          - service: worker
+            context: ./roxs-voting-app/worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve image tags
+        id: tags
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            branch_tag="production"
+            extra_tag="latest"
+          else
+            branch_tag="staging"
+            extra_tag=""
+          fi
+
+          image="${REGISTRY}/${IMAGE_PREFIX}-${{ matrix.service }}"
+          {
+            echo 'tags<<EOF'
+            echo "${image}:${branch_tag}"
+            echo "${image}:${GITHUB_SHA}"
+            if [[ -n "$extra_tag" ]]; then
+              echo "${image}:${extra_tag}"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
