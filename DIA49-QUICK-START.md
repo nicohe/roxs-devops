@@ -14,16 +14,24 @@ Crear una versión **segura y optimizada** del Voting App aplicando todas las me
 - ✅ **HEALTHCHECK**: Monitoreo automático de salud de servicios
 - ✅ **Minimización de dependencias**: Eliminación de herramientas innecesarias
 - ✅ **Imágenes base optimizadas**: `python:3.12-slim` y `node:20-alpine`
+- ✅ **Trivy integrado en CI/CD**: Escaneo automático de vulnerabilidades
 
 ### 📊 Observabilidad
 - ✅ Health endpoints en `/healthz`
 - ✅ Métricas de Prometheus disponibles
 - ✅ Logs estructurados y accesibles
+- ✅ Reportes de seguridad en GitHub Security tab
 
 ### ⚡ Performance
 - ✅ Optimización de capas Docker
 - ✅ Cache de npm limpio
 - ✅ Instalación determinística con `npm ci`
+
+### 🔄 CI/CD
+- ✅ Security scan automático en cada push
+- ✅ Pipeline falla si hay vulnerabilidades CRITICAL/HIGH
+- ✅ Reportes SARIF y JSON generados
+- ✅ Artifacts con retention de 30 días
 
 ---
 

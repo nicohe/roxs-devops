@@ -187,6 +187,9 @@ docker images | grep secure
 - ✅ Ejecución con usuarios no privilegiados
 - ✅ Health checks implementados
 - ✅ Superficie de ataque minimizada
+- ✅ **Trivy integrado en CI/CD pipeline**
+- ✅ **Escaneo automático en cada push**
+- ✅ **Reportes de seguridad en GitHub Security tab**
 
 ### Performance
 - ⬜ Imágenes < 100MB (verificar después del build)
@@ -257,9 +260,65 @@ docker push roxsross/worker:secure
 
 ---
 
+## � Integración de Trivy en CI/CD
+
+### ✅ Implementado en GitHub Actions
+
+Se ha agregado un job de **security-scan** en el pipeline CI que:
+
+- ✅ **Escaneo automático** después de cada build
+- ✅ **Severity levels**: CRITICAL, HIGH, MEDIUM, LOW
+- ✅ **Múltiples formatos de reporte**:
+  - SARIF → GitHub Security tab
+  - JSON → Artifacts (retention 30 días)
+  - Table → Output en consola
+- ✅ **Fail pipeline** si hay vulnerabilidades CRITICAL/HIGH
+- ✅ **Matrix strategy** para los 3 servicios (vote, result, worker)
+- ✅ **Permisos de seguridad** configurados
+
+### 📋 Workflow Actualizado
+
+```yaml
+security-scan:
+  name: Security Scan with Trivy
+  runs-on: ubuntu-latest
+  needs: docker-build-and-push
+  if: github.event_name == 'push'
+  strategy:
+    matrix:
+      service: [vote, result, worker]
+  steps:
+    - Run Trivy vulnerability scanner (SARIF)
+    - Upload to GitHub Security tab
+    - Run Trivy (Table format for console)
+    - Run Trivy (JSON report)
+    - Upload scan results as artifacts
+    - Fail if CRITICAL/HIGH found
+```
+
+### 🎯 Beneficios
+
+1. **Detección temprana** de vulnerabilidades en cada push
+2. **Visibilidad centralizada** en GitHub Security tab
+3. **Reportes históricos** con artifacts de 30 días
+4. **Bloqueo automático** de imágenes inseguras
+5. **Compliance** con mejores prácticas DevSecOps
+
+### 📊 Acceso a Resultados
+
+```bash
+# Ver en GitHub UI
+Repository → Security → Code scanning alerts
+
+# Descargar artifacts
+Actions → Workflow run → Artifacts → trivy-scan-{service}
+```
+
+---
+
 ## 🚀 Próximos Pasos
 
-- [ ] Integrar Trivy en pipeline CI/CD
+- [x] Integrar Trivy en pipeline CI/CD ✅ **COMPLETADO**
 - [ ] Configurar policy-as-code con OPA
 - [ ] Implementar image signing con Cosign
 - [ ] Añadir network policies en Kubernetes
