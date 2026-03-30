@@ -1,0 +1,46 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: voting-app-staging
+
+bases:
+  - ../../base
+
+nameSuffix: -staging
+
+commonLabels:
+  environment: staging
+
+images:
+  - name: vote-image
+    newName: ghcr.io/GITHUB_USER/roxs-devops-project90-vote
+    newTag: staging
+  - name: worker-image
+    newName: ghcr.io/GITHUB_USER/roxs-devops-project90-worker
+    newTag: staging
+  - name: result-image
+    newName: ghcr.io/GITHUB_USER/roxs-devops-project90-result
+    newTag: staging
+
+patches:
+  - patch: |-
+      - op: replace
+        path: /metadata/name
+        value: voting-app-staging
+    target:
+      kind: Namespace
+      name: voting-app
+  - patch: |-
+      - op: replace
+        path: /spec/ports/0/nodePort
+        value: 32000
+    target:
+      kind: Service
+      name: vote-service
+  - patch: |-
+      - op: replace
+        path: /spec/ports/0/nodePort
+        value: 32001
+    target:
+      kind: Service
+      name: result-service

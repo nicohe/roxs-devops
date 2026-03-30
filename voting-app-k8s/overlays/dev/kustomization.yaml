@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: voting-app-dev
+
+bases:
+  - ../../base
+
+nameSuffix: -dev
+
+commonLabels:
+  environment: dev
+
+images:
+  - name: vote-image
+    newName: ghcr.io/GITHUB_USER/roxs-devops-project90-vote
+    newTag: dev
+  - name: worker-image
+    newName: ghcr.io/GITHUB_USER/roxs-devops-project90-worker
+    newTag: dev
+  - name: result-image
+    newName: ghcr.io/GITHUB_USER/roxs-devops-project90-result
+    newTag: dev
+
+patches:
+  - patch: |-
+      - op: replace
+        path: /metadata/name
+        value: voting-app-dev
+    target:
+      kind: Namespace
+      name: voting-app

@@ -1,0 +1,64 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: voting-app-prod
+
+bases:
+  - ../../base
+
+nameSuffix: -prod
+
+commonLabels:
+  environment: prod
+
+images:
+  - name: vote-image
+    newName: ghcr.io/GITHUB_USER/roxs-devops-project90-vote
+    newTag: prod
+  - name: worker-image
+    newName: ghcr.io/GITHUB_USER/roxs-devops-project90-worker
+    newTag: prod
+  - name: result-image
+    newName: ghcr.io/GITHUB_USER/roxs-devops-project90-result
+    newTag: prod
+
+replicas:
+  - name: vote
+    count: 3
+  - name: result
+    count: 3
+  - name: worker
+    count: 2
+
+patches:
+  - patch: |-
+      - op: replace
+        path: /metadata/name
+        value: voting-app-prod
+    target:
+      kind: Namespace
+      name: voting-app
+  - patch: |-
+      - op: replace
+        path: /spec/ports/0/nodePort
+        value: 33000
+    target:
+      kind: Service
+      name: vote-service
+  - patch: |-
+      - op: replace
+        path: /spec/ports/0/nodePort
+        value: 33001
+    target:
+      kind: Service
+      name: result-service
+  - patch: |-
+      - op: replace
+        path: /spec/resources/requests/memory
+        value: 128Mi
+      - op: replace
+        path: /spec/resources/limits/memory
+        value: 256Mi
+    target:
+      kind: Deployment
+      labelSelector: "tier=frontend"

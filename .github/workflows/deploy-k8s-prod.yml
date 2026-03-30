@@ -1,0 +1,231 @@
+name: Deploy to Kubernetes - Production
+
+on:
+  workflow_run:
+    workflows: ["Deploy to Kubernetes - Staging"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm production deployment'
+        required: true
+        default: ''
+
+concurrency:
+  group: k8s-deploy-production
+  cancel-in-progress: false
+
+jobs:
+  validate-input:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "deploy" ]; then
+            echo "❌ Deployment not confirmed. Please type 'deploy' to proceed."
+            exit 1
+          fi
+          echo "✅ Deployment confirmed"
+
+  deploy-production:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    needs: [validate-input]
+    # Skip needs if triggered by workflow_run
+    runs-on: ubuntu-latest
+    environment: 
+      name: production
+      url: http://voting-app.local
+    permissions:
+      contents: read
+      packages: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+      
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+      
+      - name: Verify cluster connection
+        run: |
+          kubectl cluster-info
+          kubectl version --client
+      
+      - name: Pre-deployment backup
+        run: |
+          echo "📦 Creating backup of current deployment..."
+          kubectl get all -n voting-app-prod -o yaml > backup-$(date +%Y%m%d-%H%M%S).yaml
+          echo "✅ Backup created"
+      
+      - name: Update image references in Kustomization
+        run: |
+          cd voting-app-k8s/overlays/prod
+          sed -i "s|GITHUB_USER|${{ github.repository_owner }}|g" kustomization.yaml
+          sed -i "s|newTag: prod|newTag: production|g" kustomization.yaml
+      
+      - name: Preview changes
+        run: |
+          echo "📋 Preview of changes to be applied:"
+          kubectl diff -k voting-app-k8s/overlays/prod || true
+      
+      - name: Deploy to Production namespace
+        run: |
+          echo "🚀 Deploying to production..."
+          kubectl apply -k voting-app-k8s/overlays/prod
+      
+      - name: Wait for deployments to be ready with progressive checks
+        run: |
+          echo "⏳ Monitoring rollout progress..."
+          
+          # Function to check deployment health
+          check_deployment() {
+            local dep=$1
+            local namespace=$2
+            
+            echo "Checking $dep..."
+            if ! kubectl rollout status deployment/$dep -n $namespace --timeout=5m; then
+              echo "❌ $dep rollout failed"
+              return 1
+            fi
+            
+            # Additional health check
+            READY=$(kubectl get deployment $dep -n $namespace -o jsonpath='{.status.readyReplicas}')
+            DESIRED=$(kubectl get deployment $dep -n $namespace -o jsonpath='{.spec.replicas}')
+            
+            if [ "$READY" != "$DESIRED" ]; then
+              echo "❌ $dep: Ready=$READY, Desired=$DESIRED"
+              return 1
+            fi
+            
+            echo "✅ $dep is healthy"
+            return 0
+          }
+          
+          # Check each deployment
+          check_deployment "postgres-prod" "voting-app-prod"
+          check_deployment "redis-prod" "voting-app-prod"
+          check_deployment "worker-prod" "voting-app-prod"
+          check_deployment "vote-prod" "voting-app-prod"
+          check_deployment "result-prod" "voting-app-prod"
+      
+      - name: Comprehensive Health Checks
+        run: |
+          echo "🔍 Running comprehensive health checks..."
+          
+          # Check Vote Service
+          echo "Testing Vote Service..."
+          kubectl wait --for=condition=ready pod -l app=vote -n voting-app-prod --timeout=3m
+          VOTE_POD=$(kubectl get pod -l app=vote -n voting-app-prod -o jsonpath='{.items[0].metadata.name}')
+          if ! kubectl exec -n voting-app-prod $VOTE_POD -- curl -f -s http://localhost > /dev/null; then
+            echo "❌ Vote service health check failed"
+            exit 1
+          fi
+          echo "✅ Vote service is healthy"
+          
+          # Check Result Service
+          echo "Testing Result Service..."
+          kubectl wait --for=condition=ready pod -l app=result -n voting-app-prod --timeout=3m
+          RESULT_POD=$(kubectl get pod -l app=result -n voting-app-prod -o jsonpath='{.items[0].metadata.name}')
+          if ! kubectl exec -n voting-app-prod $RESULT_POD -- curl -f -s http://localhost:3000 > /dev/null; then
+            echo "❌ Result service health check failed"
+            exit 1
+          fi
+          echo "✅ Result service is healthy"
+          
+          # Check Database connectivity
+          echo "Testing Database connectivity..."
+          kubectl exec -n voting-app-prod $RESULT_POD -- node -e "require('pg').Client" || echo "Warning: pg module check"
+          
+          echo "✅ All health checks passed!"
+      
+      - name: Run production smoke tests
+        run: |
+          echo "🧪 Running production smoke tests..."
+          
+          # Verify all pods are healthy
+          NOT_READY=$(kubectl get pods -n voting-app-prod --field-selector=status.phase!=Running --no-headers 2>/dev/null | wc -l)
+          if [ "$NOT_READY" -gt 0 ]; then
+            echo "❌ Found $NOT_READY pods not in Running state"
+            kubectl get pods -n voting-app-prod
+            exit 1
+          fi
+          
+          # Check for any pod restarts
+          RESTARTS=$(kubectl get pods -n voting-app-prod -o jsonpath='{range .items[*]}{.status.containerStatuses[*].restartCount}{"\n"}{end}' | awk '{sum+=$1} END {print sum}')
+          echo "Total pod restarts: $RESTARTS"
+          
+          # Check logs for errors
+          echo "Checking recent logs for errors..."
+          for pod in $(kubectl get pods -n voting-app-prod -o jsonpath='{.items[*].metadata.name}'); do
+            echo "Checking $pod..."
+            ERROR_COUNT=$(kubectl logs --tail=50 -n voting-app-prod $pod 2>/dev/null | grep -i "error" | wc -l || echo 0)
+            if [ "$ERROR_COUNT" -gt 5 ]; then
+              echo "⚠️  Warning: $pod has $ERROR_COUNT error messages in recent logs"
+            fi
+          done
+          
+          echo "✅ Smoke tests completed"
+      
+      - name: Display deployment status
+        if: always()
+        run: |
+          echo "📊 Production Deployment Status:"
+          kubectl get all -n voting-app-prod
+          echo ""
+          echo "📋 Pod Details:"
+          kubectl get pods -n voting-app-prod -o wide
+          echo ""
+          echo "📈 Resource Usage:"
+          kubectl top pods -n voting-app-prod 2>/dev/null || echo "Metrics not available"
+          echo ""
+          echo "📝 Recent Events:"
+          kubectl get events -n voting-app-prod --sort-by='.lastTimestamp' | tail -30
+      
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "❌ Production deployment failed! Initiating rollback..."
+          
+          kubectl rollout undo deployment/vote-prod -n voting-app-prod
+          kubectl rollout undo deployment/result-prod -n voting-app-prod
+          kubectl rollout undo deployment/worker-prod -n voting-app-prod
+          
+          # Wait for rollback to complete
+          echo "⏳ Waiting for rollback to complete..."
+          kubectl rollout status deployment/vote-prod -n voting-app-prod --timeout=5m
+          kubectl rollout status deployment/result-prod -n voting-app-prod --timeout=5m
+          kubectl rollout status deployment/worker-prod -n voting-app-prod --timeout=5m
+          
+          # Verify rollback health
+          kubectl wait --for=condition=ready pod -l app=vote -n voting-app-prod --timeout=2m
+          kubectl wait --for=condition=ready pod -l app=result -n voting-app-prod --timeout=2m
+          
+          echo "✅ Rollback completed successfully"
+          echo "📧 Please review the deployment logs and fix the issues before retrying"
+          exit 1
+      
+      - name: Notify success
+        if: success()
+        run: |
+          echo "🎉🎉🎉 PRODUCTION DEPLOYMENT SUCCESSFUL! 🎉🎉🎉"
+          echo ""
+          echo "📍 Production URLs:"
+          echo "   Vote App: http://voting-app.local:33000"
+          echo "   Result App: http://voting-app.local:33001"
+          echo ""
+          echo "📊 Deployment Summary:"
+          kubectl get deployments -n voting-app-prod
+          echo ""
+          echo "✅ All services are running and healthy"

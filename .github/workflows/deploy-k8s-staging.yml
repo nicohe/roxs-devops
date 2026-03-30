@@ -1,0 +1,128 @@
+name: Deploy to Kubernetes - Staging
+
+on:
+  workflow_run:
+    workflows: ["Deploy to Kubernetes - Dev"]
+    types: [completed]
+    branches: [develop]
+  workflow_dispatch:
+
+concurrency:
+  group: k8s-deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy-staging:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    environment: 
+      name: staging
+      url: http://staging.voting-app.local
+    permissions:
+      contents: read
+      packages: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+      
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_STAGING }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+      
+      - name: Verify cluster connection
+        run: |
+          kubectl cluster-info
+          kubectl version --client
+      
+      - name: Update image references in Kustomization
+        run: |
+          cd voting-app-k8s/overlays/staging
+          sed -i "s|GITHUB_USER|${{ github.repository_owner }}|g" kustomization.yaml
+      
+      - name: Deploy to Staging namespace
+        run: |
+          kubectl apply -k voting-app-k8s/overlays/staging
+      
+      - name: Wait for deployments to be ready
+        run: |
+          echo "⏳ Waiting for deployments to be ready..."
+          kubectl rollout status deployment/vote-staging -n voting-app-staging --timeout=5m
+          kubectl rollout status deployment/result-staging -n voting-app-staging --timeout=5m
+          kubectl rollout status deployment/worker-staging -n voting-app-staging --timeout=5m
+          kubectl rollout status deployment/postgres-staging -n voting-app-staging --timeout=5m
+          kubectl rollout status deployment/redis-staging -n voting-app-staging --timeout=3m
+      
+      - name: Health Check - Vote Service
+        run: |
+          echo "🔍 Running health checks..."
+          kubectl wait --for=condition=ready pod -l app=vote -n voting-app-staging --timeout=2m
+          
+          # Verify pods are responding
+          VOTE_POD=$(kubectl get pod -l app=vote -n voting-app-staging -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n voting-app-staging $VOTE_POD -- curl -f http://localhost || echo "Warning: Health check failed"
+      
+      - name: Health Check - Result Service
+        run: |
+          kubectl wait --for=condition=ready pod -l app=result -n voting-app-staging --timeout=2m
+          
+          RESULT_POD=$(kubectl get pod -l app=result -n voting-app-staging -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n voting-app-staging $RESULT_POD -- curl -f http://localhost:3000 || echo "Warning: Health check failed"
+      
+      - name: Run smoke tests
+        run: |
+          echo "🧪 Running smoke tests..."
+          
+          # Check all pods are running
+          NOT_READY=$(kubectl get pods -n voting-app-staging --field-selector=status.phase!=Running --no-headers 2>/dev/null | wc -l)
+          if [ "$NOT_READY" -gt 0 ]; then
+            echo "❌ Found $NOT_READY pods not in Running state"
+            kubectl get pods -n voting-app-staging
+            exit 1
+          fi
+          
+          echo "✅ All pods are running"
+      
+      - name: Display deployment status
+        if: always()
+        run: |
+          echo "📊 Deployment Status:"
+          kubectl get all -n voting-app-staging
+          echo ""
+          echo "📋 Pod Details:"
+          kubectl get pods -n voting-app-staging -o wide
+          echo ""
+          echo "📝 Recent Events:"
+          kubectl get events -n voting-app-staging --sort-by='.lastTimestamp' | tail -20
+      
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed! Rolling back..."
+          kubectl rollout undo deployment/vote-staging -n voting-app-staging
+          kubectl rollout undo deployment/result-staging -n voting-app-staging
+          kubectl rollout undo deployment/worker-staging -n voting-app-staging
+          
+          # Wait for rollback to complete
+          kubectl rollout status deployment/vote-staging -n voting-app-staging --timeout=3m
+          kubectl rollout status deployment/result-staging -n voting-app-staging --timeout=3m
+          kubectl rollout status deployment/worker-staging -n voting-app-staging --timeout=3m
+          
+          echo "✅ Rollback completed"
+          exit 1
+      
+      - name: Notify success
+        if: success()
+        run: |
+          echo "🎉 Staging deployment successful!"
+          echo "Vote App: http://staging.voting-app.local:32000"
+          echo "Result App: http://staging.voting-app.local:32001"

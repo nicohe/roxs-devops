@@ -1,324 +1,349 @@
-# Roxs Voting App - Despliegue en Kubernetes
+# 🚀 Roxs Voting App - Kubernetes Deployments
 
-Este directorio contiene todos los manifiestos de Kubernetes necesarios para desplegar la aplicación de votación roxs-voting-app en un clúster de Kubernetes (Minikube).
+Este directorio contiene manifiestos de Kubernetes para desplegar la **Roxs Voting App** con soporte para **múltiples ambientes**.
 
-## 📋 Arquitectura de la Aplicación
+## 🎯 Dos Modos de Despliegue
 
-La aplicación consta de 5 componentes:
+### 1️⃣ **Día 35** - Despliegue Local Básico 
+Manifiestos numerados `01-*.yaml` hasta `08-*.yaml` para despliegue local en Minikube.
 
-| Componente | Imagen | Descripción | Tipo de Servicio |
-|------------|--------|-------------|------------------|
-| **vote** | roxsross12/vote | Frontend de votación | NodePort (30080) |
-| **result** | roxsross12/result | Resultados en tiempo real | NodePort (30081) |
-| **worker** | roxsross12/worker | Procesa votos | Sin servicio |
-| **redis** | redis:alpine | Cache temporal | ClusterIP |
-| **postgres** | postgres:15-alpine | Base de datos | ClusterIP |
+### 2️⃣ **Día 42** - CI/CD con Múltiples Ambientes
+Estructura con Kustomize (`base/` + `overlays/`) para CI/CD con GitHub Actions.
 
-## 🗂️ Estructura de Archivos
+---
+
+## 📁 Estructura del Directorio
 
 ```
 voting-app-k8s/
-├── 01-namespace.yaml           # Namespace para organizar recursos
-├── 02-storage.yaml             # PV y PVC para PostgreSQL
-├── 03-configs-secrets.yaml     # ConfigMaps y Secrets
-├── 04-postgres.yaml            # Deployment y Service de PostgreSQL
-├── 05-redis.yaml               # Deployment y Service de Redis
-├── 06-vote.yaml                # Deployment y Service de Vote App
-├── 07-worker.yaml              # Deployment del Worker
-├── 08-result.yaml              # Deployment y Service de Result App
-├── deploy.sh                   # Script de despliegue automatizado
-└── README.md                   # Este archivo
+├── 01-namespace.yaml          # [Día 35] Namespace base
+├── 02-storage.yaml            # [Día 35] PVC para PostgreSQL
+├── 03-configs-secrets.yaml    # [Día 35] ConfigMaps y Secrets
+├── 04-postgres.yaml           # [Día 35] PostgreSQL deployment
+├── 05-redis.yaml              # [Día 35] Redis deployment
+├── 06-vote.yaml               # [Día 35] Vote app deployment
+├── 07-worker.yaml             # [Día 35] Worker deployment
+├── 08-result.yaml             # [Día 35] Result app deployment
+├── deploy.sh                  # [Día 35] Script de despliegue local
+│
+├── base/                      # [Día 42] Manifiestos base de Kustomize
+│   ├── kustomization.yaml
+│   ├── namespace.yaml
+│   ├── storage.yaml
+│   ├── configs-secrets.yaml
+│   ├── postgres.yaml
+│   ├── redis.yaml
+│   ├── vote.yaml
+│   ├── worker.yaml
+│   └── result.yaml
+│
+├── overlays/                  # [Día 42] Configuraciones por ambiente
+│   ├── dev/
+│   │   └── kustomization.yaml # Dev: images:*:staging, NodePort:31000-31001
+│   ├── staging/
+│   │   └── kustomization.yaml # Staging: images:*:staging, NodePort:32000-32001
+│   └── prod/
+│       └── kustomization.yaml # Prod: images:*:production, NodePort:33000-33001
+│                               #       3 replicas, más recursos
+│
+├── quick-start-k8s.sh         # [Día 42] Script de despliegue multi-ambiente
+├── DIA42-CICD-KUBERNETES-GUIDE.md  # [Día 42] Guía completa CI/CD
+├── DEPLOYMENT_SUMMARY.md      # [Día 35] Resumen del despliegue básico
+└── README.md                  # Este archivo
 ```
 
-## 🚀 Despliegue Rápido
+---
 
-### Opción 1: Script Automatizado (Recomendado)
+## 🚀 Guías Rápidas
+
+### Para Día 35 - Despliegue Local
 
 ```bash
-# Dar permisos de ejecución al script
+# Iniciar Minikube
+minikube start
+
+# Opción 1: Usar script automatizado
 chmod +x deploy.sh
-
-# Ejecutar el script de despliegue
 ./deploy.sh
-```
 
-El script desplegará todos los componentes en el orden correcto y mostrará las URLs de acceso.
-
-### Opción 2: Despliegue Manual
-
-Si prefieres entender cada paso:
-
-```bash
-# 1. Crear namespace
+# Opción 2: Aplicar manualmente
 kubectl apply -f 01-namespace.yaml
-
-# 2. Configurar almacenamiento
 kubectl apply -f 02-storage.yaml
-
-# 3. Crear configuraciones
 kubectl apply -f 03-configs-secrets.yaml
-
-# 4. Desplegar PostgreSQL
 kubectl apply -f 04-postgres.yaml
-kubectl wait --for=condition=ready pod -l app=postgres -n voting-app --timeout=120s
-
-# 5. Desplegar Redis
 kubectl apply -f 05-redis.yaml
-kubectl wait --for=condition=ready pod -l app=redis -n voting-app --timeout=60s
-
-# 6. Desplegar aplicaciones
 kubectl apply -f 06-vote.yaml
 kubectl apply -f 07-worker.yaml
 kubectl apply -f 08-result.yaml
 
-# Esperar a que todo esté listo
-kubectl wait --for=condition=ready pod -l app=vote -n voting-app --timeout=90s
-kubectl wait --for=condition=ready pod -l app=result -n voting-app --timeout=90s
-```
-
-## 🔍 Verificación del Despliegue
-
-### Ver todos los pods
-```bash
+# Verificar
 kubectl get pods -n voting-app
-```
 
-Deberías ver algo similar a:
-```
-NAME                        READY   STATUS    RESTARTS   AGE
-postgres-xxxxxxxxxx-xxxxx   1/1     Running   0          2m
-redis-xxxxxxxxxx-xxxxx      1/1     Running   0          1m
-vote-xxxxxxxxxx-xxxxx       1/1     Running   0          1m
-vote-xxxxxxxxxx-xxxxx       1/1     Running   0          1m
-worker-xxxxxxxxxx-xxxxx     1/1     Running   0          1m
-result-xxxxxxxxxx-xxxxx     1/1     Running   0          1m
-result-xxxxxxxxxx-xxxxx     1/1     Running   0          1m
-```
-
-### Ver todos los servicios
-```bash
-kubectl get services -n voting-app
-```
-
-### Ver eventos (útil para debugging)
-```bash
-kubectl get events -n voting-app --sort-by='.lastTimestamp'
-```
-
-## 🌐 Acceso a la Aplicación
-
-### Obtener las URLs de acceso
-
-```bash
-# Obtener la IP de Minikube
-minikube ip
-
-# O usar el comando de servicio de Minikube
-minikube service vote-service -n voting-app --url
-minikube service result-service -n voting-app --url
-```
-
-### Abrir en el navegador automáticamente
-```bash
-# Vote App
+# Acceder a la app
 minikube service vote-service -n voting-app
-
-# Result App
 minikube service result-service -n voting-app
 ```
 
-Por defecto:
-- **Vote App**: http://[MINIKUBE_IP]:30080
-- **Result App**: http://[MINIKUBE_IP]:30081
-
-## 🧪 Testing de la Aplicación
-
-### 1. Verificar que todos los pods estén corriendo
-✅ Todos los pods deben estar en estado `Running`
-
-### 2. Votar en la aplicación
-- Acceder a http://[MINIKUBE_IP]:30080
-- Votar entre Gato 🐱 y Perro 🐶
-
-### 3. Ver resultados
-- Acceder a http://[MINIKUBE_IP]:30081
-- Los resultados deben actualizarse en tiempo real
-
-### 4. Probar persistencia
-```bash
-# Eliminar el pod de PostgreSQL
-kubectl delete pod -l app=postgres -n voting-app
-
-# Esperar a que se recree automáticamente
-kubectl get pods -n voting-app -w
-
-# Verificar que los votos anteriores siguen ahí
-```
-
-## 📊 Monitoreo y Logs
-
-### Ver logs de un componente
-```bash
-kubectl logs -f deployment/vote -n voting-app
-kubectl logs -f deployment/worker -n voting-app
-kubectl logs -f deployment/result -n voting-app
-kubectl logs -f deployment/postgres -n voting-app
-kubectl logs -f deployment/redis -n voting-app
-```
-
-### Describir un pod (útil para debugging)
-```bash
-kubectl describe pod [POD_NAME] -n voting-app
-```
-
-### Ver estado de los recursos
-```bash
-# Ver todo en el namespace
-kubectl get all -n voting-app
-
-# Ver persistent volumes
-kubectl get pv,pvc -n voting-app
-
-# Ver configmaps y secrets
-kubectl get configmaps,secrets -n voting-app
-```
-
-## 🛠️ Troubleshooting
-
-### Pod no inicia (Status: CrashLoopBackOff)
-```bash
-# Ver logs del pod
-kubectl logs [POD_NAME] -n voting-app
-
-# Ver eventos
-kubectl describe pod [POD_NAME] -n voting-app
-```
-
-### Problemas de conectividad entre servicios
-```bash
-# Verificar que los services están creados
-kubectl get services -n voting-app
-
-# Verificar DNS interno
-kubectl run -it --rm debug --image=busybox --restart=Never -n voting-app -- nslookup postgres-service
-```
-
-### Verificar configuraciones
-```bash
-# Ver ConfigMap
-kubectl get configmap voting-app-config -n voting-app -o yaml
-
-# Ver Secret (codificado en base64)
-kubectl get secret postgres-secret -n voting-app -o yaml
-```
-
-### Worker no procesa votos
-```bash
-# Ver logs del worker
-kubectl logs -f deployment/worker -n voting-app
-
-# Verificar conexión a Redis y PostgreSQL
-kubectl exec -it deployment/worker -n voting-app -- env | grep -E '(REDIS|POSTGRES)'
-```
-
-## 🔧 Configuración Personalizada
-
-### Cambiar el número de réplicas
-
-Para Vote App:
-```bash
-kubectl scale deployment vote -n voting-app --replicas=3
-```
-
-Para Result App:
-```bash
-kubectl scale deployment result -n voting-app --replicas=3
-```
-
-### Cambiar credenciales de PostgreSQL
-
-1. Editar el Secret:
-```bash
-kubectl edit secret postgres-secret -n voting-app
-```
-
-2. Los valores deben estar en base64:
-```bash
-echo -n "nuevo_password" | base64
-```
-
-3. Reiniciar PostgreSQL:
-```bash
-kubectl rollout restart deployment/postgres -n voting-app
-```
-
-## 🧹 Limpieza
-
-### Eliminar toda la aplicación
-```bash
-kubectl delete namespace voting-app
-```
-
-Esto eliminará todos los recursos en el namespace `voting-app`.
-
-### Eliminar componentes individuales
-```bash
-kubectl delete -f 08-result.yaml
-kubectl delete -f 07-worker.yaml
-kubectl delete -f 06-vote.yaml
-kubectl delete -f 05-redis.yaml
-kubectl delete -f 04-postgres.yaml
-kubectl delete -f 03-configs-secrets.yaml
-kubectl delete -f 02-storage.yaml
-kubectl delete -f 01-namespace.yaml
-```
-
-## 📚 Recursos Adicionales
-
-### Comandos útiles de kubectl
-```bash
-# Ver todos los recursos en el namespace
-kubectl get all -n voting-app
-
-# Obtener YAML de un recurso existente
-kubectl get deployment vote -n voting-app -o yaml
-
-# Editar un recurso en vivo
-kubectl edit deployment vote -n voting-app
-
-# Ejecutar comandos dentro de un pod
-kubectl exec -it deployment/postgres -n voting-app -- psql -U postgres
-
-# Port forwarding (alternativa a NodePort)
-kubectl port-forward service/vote-service 8080:80 -n voting-app
-```
-
-### Verificar health checks
-```bash
-# Ver detalles de los probes
-kubectl describe deployment vote -n voting-app | grep -A 5 Liveness
-kubectl describe deployment vote -n voting-app | grep -A 5 Readiness
-```
-
-## 🎯 Próximos Pasos
-
-- [ ] Agregar Ingress Controller para acceso mediante dominios
-- [ ] Implementar HorizontalPodAutoscaler para escalado automático
-- [ ] Agregar NetworkPolicies para seguridad
-- [ ] Implementar Prometheus + Grafana para monitoreo
-- [ ] Configurar CI/CD con GitHub Actions
-- [ ] Agregar Helm Charts para facilitar el despliegue
-
-## 🏆 Desafío Extra Completado
-
-- ✅ Health checks (liveness y readiness probes)
-- ✅ Resource limits y requests
-- ✅ Labels y annotations
-- ✅ Script de deploy automatizado
-- ✅ Documentación completa
+📖 **Documentación completa**: Ver [DEPLOYMENT_SUMMARY.md](./DEPLOYMENT_SUMMARY.md)
 
 ---
 
-**Día 35 - Desafío Final Semana 5** ✅  
-**90 Días de DevOps con Roxs** 🚀  
-#DevOpsConRoxs
+### Para Día 42 - CI/CD con Múltiples Ambientes
+
+```bash
+# Opción 1: Despliegue local para testing
+chmod +x quick-start-k8s.sh
+./quick-start-k8s.sh local
+
+# Opción 2: Despliegue con Kustomize
+kubectl apply -k overlays/dev        # Deploy a Dev
+kubectl apply -k overlays/staging    # Deploy a Staging
+kubectl apply -k overlays/prod       # Deploy a Prod
+
+# Verificar
+kubectl get all -n voting-app-dev
+kubectl get all -n voting-app-staging
+kubectl get all -n voting-app-prod
+
+# Acceder (ejemplo para dev)
+minikube service vote-service-dev -n voting-app-dev
+minikube service result-service-dev -n voting-app-dev
+```
+
+📖 **Documentación completa**: Ver [DIA42-CICD-KUBERNETES-GUIDE.md](./DIA42-CICD-KUBERNETES-GUIDE.md)
+
+---
+
+## 🏗️ Arquitectura de la Aplicación
+
+```
+┌─────────────┐
+│   Usuario   │
+└──────┬──────┘
+       │
+       ├──────────> Vote App (Flask)
+       │              ↓
+       │            Redis (Cache)
+       │              ↓
+       │            Worker (Node.js)
+       │              ↓
+       │            PostgreSQL (Database)
+       │              ↓
+       └──────────> Result App (Node.js)
+```
+
+### Componentes:
+
+| Componente | Imagen | Puerto | Réplicas | Descripción |
+|------------|--------|--------|----------|-------------|
+| **vote** | vote:local o ghcr.io/*/vote | 80 | 2-3 | Frontend de votación (Flask) |
+| **worker** | worker:local o ghcr.io/*/worker | - | 1-2 | Procesa votos Redis→PostgreSQL |
+| **result** | result:local o ghcr.io/*/result | 3000 | 2-3 | Dashboard de resultados (Node.js) |
+| **redis** | redis:alpine | 6379 | 1 | Cache de votos |
+| **postgres** | postgres:15-alpine | 5432 | 1 | Base de datos persistente |
+
+---
+
+## 🔍 Comandos Útiles
+
+### Ver estado de los recursos
+
+```bash
+# Ver todos los pods
+kubectl get pods -n voting-app         # Día 35
+kubectl get pods -n voting-app-dev     # Día 42 - Dev
+kubectl get pods -n voting-app-staging # Día 42 - Staging
+kubectl get pods -n voting-app-prod    # Día 42 - Prod
+
+# Ver servicios
+kubectl get svc -n voting-app
+
+# Ver deployments
+kubectl get deployments -n voting-app
+```
+
+### Debugging
+
+```bash
+# Ver logs de un componente
+kubectl logs -l app=vote -n voting-app --tail=50 -f
+kubectl logs -l app=worker -n voting-app --tail=50 -f
+kubectl logs -l app=result -n voting-app --tail=50 -f
+
+# Ver eventos
+kubectl get events -n voting-app --sort-by='.lastTimestamp' | tail -20
+
+# Describir un pod (para ver errores)
+kubectl describe pod <POD_NAME> -n voting-app
+
+# Entrar a un pod
+kubectl exec -it <POD_NAME> -n voting-app -- /bin/sh
+
+# Ver configuración de un deployment
+kubectl get deployment vote -n voting-app -o yaml
+```
+
+### Gestión de Deployments
+
+```bash
+# Reiniciar un deployment
+kubectl rollout restart deployment/vote -n voting-app
+
+# Ver historial de rollouts
+kubectl rollout history deployment/vote -n voting-app
+
+# Rollback al deployment anterior
+kubectl rollout undo deployment/vote -n voting-app
+
+# Rollback a una revisión específica
+kubectl rollout undo deployment/vote -n voting-app --to-revision=2
+
+# Escalar manualmente
+kubectl scale deployment/vote --replicas=3 -n voting-app
+```
+
+### Limpieza
+
+```bash
+# Eliminar todo (Día 35)
+kubectl delete namespace voting-app
+
+# Eliminar por ambiente (Día 42)
+kubectl delete namespace voting-app-dev
+kubectl delete namespace voting-app-staging
+kubectl delete namespace voting-app-prod
+
+# Eliminar usando Kustomize
+kubectl delete -k overlays/dev
+kubectl delete -k overlays/staging
+kubectl delete -k overlays/prod
+```
+
+---
+
+## 🌐 Acceso a las Aplicaciones
+
+### Minikube
+
+```bash
+# Obtener IP de Minikube
+minikube ip
+
+# Abrir servicios automáticamente
+minikube service vote-service -n voting-app
+minikube service result-service -n voting-app
+
+# Listartodos los servicios
+minikube service list
+```
+
+### Port-Forward (alternativa)
+
+```bash
+# Vote App
+kubectl port-forward -n voting-app svc/vote-service 8080:80
+
+# Result App
+kubectl port-forward -n voting-app svc/result-service 8081:3000
+
+# Accede en: http://localhost:8080 y http://localhost:8081
+```
+
+### NodePort (producción)
+
+```bash
+# Obtener NodePorts
+kubectl get svc -n voting-app
+
+# Acceder con IP del nodo
+NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[0].address}')
+echo "Vote:   http://$NODE_IP:31000"
+echo "Result: http://$NODE_IP:31001"
+```
+
+---
+
+## 🎓 Recursos de Aprendizaje
+
+### Día 35 - Conceptos Aprendidos
+- ✅ Namespaces
+- ✅ Deployments y ReplicaSets
+- ✅ Services (ClusterIP, NodePort)
+- ✅ ConfigMaps y Secrets
+- ✅ PersistentVolumes y PersistentVolumeClaims
+- ✅ Liveness y Readiness Probes
+- ✅ Resource Limits y Requests
+- ✅ Labels y Selectors
+
+### Día 42 - Conceptos Aprendidos
+- ✅ Kustomize (base + overlays)
+- ✅ GitHub Actions CI/CD
+- ✅ Múltiples ambientes (dev, staging, prod)
+- ✅ Health checks avanzados
+- ✅ Rollback automático
+- ✅ GitHub Environments con aprobaciones
+- ✅ GHCR (GitHub Container Registry)
+- ✅ Infrastructure as Code
+
+---
+
+## 🆘 Troubleshooting
+
+### Pods en estado CrashLoopBackOff
+
+```bash
+# Ver logs del pod
+kubectl logs <POD_NAME> -n voting-app
+
+# Ver eventos del pod
+kubectl describe pod <POD_NAME> -n voting-app
+
+# Verificar probes (puede ser timeout muy corto)
+kubectl get pod <POD_NAME> -n voting-app -o yaml | grep -A 10 "livenessProbe\|readinessProbe"
+```
+
+### ImagePullBackOff
+
+```bash
+# Verificar el nombre de la imagen
+kubectl get pod <POD_NAME> -n voting-app -o yaml | grep image:
+
+# Para imágenes de GHCR, crear secret
+kubectl create secret docker-registry ghcr-secret \
+  --docker-server=ghcr.io \
+  --docker-username=<USUARIO> \
+  --docker-password=<GITHUB_TOKEN> \
+  -n voting-app
+
+# Agregar secret al deployment (spec.template.spec.imagePullSecrets)
+```
+
+### Pods no pueden conectarse entre sí
+
+```bash
+# Verificar servicios
+kubectl get svc -n voting-app
+
+# Probar DNS interno
+kubectl run -it --rm debug --image=busybox --restart=Never -n voting-app -- nslookup redis-service
+
+# Verificar network policies (si aplica)
+kubectl get networkpolicies -n voting-app
+```
+
+---
+
+## 📚 Documentación Adicional
+
+- 📄 [DEPLOYMENT_SUMMARY.md](./DEPLOYMENT_SUMMARY.md) - Resumen detallado del Día 35
+- 📄 [DIA42-CICD-KUBERNETES-GUIDE.md](./DIA42-CICD-KUBERNETES-GUIDE.md) - Guía completa CI/CD con GitHub Actions
+- 🔗 [Kubernetes Documentation](https://kubernetes.io/docs/)
+- 🔗 [Kustomize Documentation](https://kustomize.io/)
+- 🔗 [GitHub Actions Documentation](https://docs.github.com/actions)
+
+---
+
+**Autor:** Nicolas Herrera  
+**Challenges:** Día 35 + Día 42 - 90 Days DevOps con Roxs  
+**Fecha:** Marzo 2026  
+**Proyecto:** [roxsross/roxs-devops-project90](https://github.com/roxsross/roxs-devops-project90)

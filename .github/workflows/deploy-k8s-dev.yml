@@ -1,0 +1,99 @@
+name: Deploy to Kubernetes - Dev
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [develop]
+  workflow_dispatch:
+
+concurrency:
+  group: k8s-deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy-dev:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    environment: 
+      name: dev
+      url: http://dev.voting-app.local
+    permissions:
+      contents: read
+      packages: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+      
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+      
+      - name: Verify cluster connection
+        run: |
+          kubectl cluster-info
+          kubectl version --client
+      
+      - name: Update image references in Kustomization
+        run: |
+          cd voting-app-k8s/overlays/dev
+          sed -i "s|GITHUB_USER|${{ github.repository_owner }}|g" kustomization.yaml
+          sed -i "s|newTag: dev|newTag: staging|g" kustomization.yaml
+      
+      - name: Deploy to Dev namespace
+        run: |
+          kubectl apply -k voting-app-k8s/overlays/dev
+      
+      - name: Wait for deployments to be ready
+        run: |
+          echo "⏳ Waiting for deployments to be ready..."
+          kubectl rollout status deployment/vote-dev -n voting-app-dev --timeout=5m
+          kubectl rollout status deployment/result-dev -n voting-app-dev --timeout=5m
+          kubectl rollout status deployment/worker-dev -n voting-app-dev --timeout=5m
+          kubectl rollout status deployment/postgres-dev -n voting-app-dev --timeout=5m
+          kubectl rollout status deployment/redis-dev -n voting-app-dev --timeout=3m
+      
+      - name: Health Check - Vote Service
+        run: |
+          echo "🔍 Running health checks..."
+          kubectl wait --for=condition=ready pod -l app=vote -n voting-app-dev --timeout=2m
+          
+          # Get NodePort and test
+          NODE_PORT=$(kubectl get svc vote-service-dev -n voting-app-dev -o jsonpath='{.spec.ports[0].nodePort}')
+          echo "Vote service running on NodePort: $NODE_PORT"
+      
+      - name: Health Check - Result Service
+        run: |
+          kubectl wait --for=condition=ready pod -l app=result -n voting-app-dev --timeout=2m
+          
+          NODE_PORT=$(kubectl get svc result-service-dev -n voting-app-dev -o jsonpath='{.spec.ports[0].nodePort}')
+          echo "Result service running on NodePort: $NODE_PORT"
+      
+      - name: Display deployment status
+        if: always()
+        run: |
+          echo "📊 Deployment Status:"
+          kubectl get all -n voting-app-dev
+          echo ""
+          echo "📋 Pod Details:"
+          kubectl get pods -n voting-app-dev -o wide
+      
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed! Rolling back..."
+          kubectl rollout undo deployment/vote-dev -n voting-app-dev
+          kubectl rollout undo deployment/result-dev -n voting-app-dev
+          kubectl rollout undo deployment/worker-dev -n voting-app-dev
+          echo "✅ Rollback completed"
+          exit 1

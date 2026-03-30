@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: voting-app
+  labels:
+    name: voting-app
+    project: roxs-voting-app
