@@ -1,0 +1,66 @@
+# Worker - Procesa los votos de Redis y los guarda en PostgreSQL
+# Solo Deployment, no necesita Service (no recibe peticiones directas)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: voting-app
+  labels:
+    app: worker
+    tier: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+        tier: backend
+    spec:
+      containers:
+      - name: worker
+        image: worker:local
+        imagePullPolicy: Never
+        env:
+        # Configuración de Redis
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: voting-app-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: voting-app-config
+              key: REDIS_PORT
+        # Configuración de PostgreSQL
+        - name: DATABASE_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: voting-app-config
+              key: POSTGRES_HOST
+        - name: DATABASE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: voting-app-config
+              key: POSTGRES_DB
+        - name: DATABASE_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_USER
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_PASSWORD
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "250m"

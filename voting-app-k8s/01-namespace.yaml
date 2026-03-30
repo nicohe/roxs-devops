@@ -1,0 +1,10 @@
+# Namespace para la aplicación de votación
+# Permite organizar y aislar todos los recursos de la aplicación
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: voting-app
+  labels:
+    name: voting-app
+    project: roxs-voting-app
+    environment: development

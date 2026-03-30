@@ -1,0 +1,18 @@
+# Almacenamiento persistente para PostgreSQL
+# Garantiza que los datos de votación persistan aunque se reinicien los pods
+# Usa el aprovisionador dinámico de Minikube (standard)
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: voting-app
+  labels:
+    app: postgres
+spec:
+  storageClassName: standard
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
