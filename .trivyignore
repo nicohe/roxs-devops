@@ -1,0 +1,10 @@
+# Trivy Ignore File
+# Lista de CVEs a ignorar durante el escaneo de seguridad
+# Formato: CVE-ID  # Justificación
+
+# Ejemplo:
+# CVE-2024-12345  # False positive - no aplica a nuestro caso de uso
+# CVE-2024-67890  # No hay fix disponible, mitigado mediante network policies
+
+# Agregar CVEs específicos aquí solo si están justificados
+# Se recomienda revisar periódicamente y remover cuando haya fixes disponibles
