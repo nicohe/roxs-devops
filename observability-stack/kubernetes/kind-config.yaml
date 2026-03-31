@@ -1,0 +1,43 @@
+# Kind cluster configuration with extra port mappings
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "ingress-ready=true"
+  extraPortMappings:
+  # Voting App
+  - containerPort: 30080
+    hostPort: 30080
+    protocol: TCP
+    listenAddress: "0.0.0.0"
+  - containerPort: 30081
+    hostPort: 30081
+    protocol: TCP
+    listenAddress: "0.0.0.0"
+  # Monitoring Stack
+  - containerPort: 30090
+    hostPort: 30090
+    protocol: TCP
+    listenAddress: "0.0.0.0"
+  # Grafana
+  - containerPort: 30091
+    hostPort: 30091
+    protocol: TCP
+    listenAddress: "0.0.0.0"
+  # Jaeger
+  - containerPort: 16686
+    hostPort: 16686
+    protocol: TCP
+    listenAddress: "0.0.0.0"
+  # Kibana
+  - containerPort: 30093
+    hostPort: 30093
+    protocol: TCP
+    listenAddress: "0.0.0.0"
+- role: worker
+- role: worker

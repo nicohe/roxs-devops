@@ -1,0 +1,86 @@
+---
+# ServiceMonitor para Vote Service
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vote-metrics
+  namespace: voting-app
+  labels:
+    app: vote
+    release: prometheus  # Required para que Prometheus Operator lo detecte
+spec:
+  selector:
+    matchLabels:
+      app: vote
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+    - voting-app
+---
+# ServiceMonitor para Worker Service
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: worker-metrics
+  namespace: voting-app
+  labels:
+    app: worker
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: worker
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+    - voting-app
+---
+# ServiceMonitor para Result Service
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: result-metrics
+  namespace: voting-app
+  labels:
+    app: result
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: result
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+    - voting-app
+---
+# PodMonitor adicional para capturar métricas a nivel de pod
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: voting-app-pods
+  namespace: voting-app
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      component: frontend
+  podMetricsEndpoints:
+  - port: http
+    path: /metrics
+    interval: 15s
+  namespaceSelector:
+    matchNames:
+    - voting-app

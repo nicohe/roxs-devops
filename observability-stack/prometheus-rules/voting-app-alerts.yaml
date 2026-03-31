@@ -1,0 +1,280 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: voting-app-alerts
+  namespace: voting-app
+  labels:
+    release: prometheus
+    app: voting-app
+spec:
+  groups:
+  - name: voting-app-slo-alerts
+    interval: 30s
+    rules:
+    # SLO: 99.5% Availability
+    # Error Budget: 0.5% (30 day window = 3.6 hours downtime allowed)
+    
+    - alert: ErrorBudgetBurnRateCritical
+      expr: |
+        (
+          sum(rate(http_requests_total{namespace="voting-app",status=~"5.."}[1h]))
+          /
+          sum(rate(http_requests_total{namespace="voting-app"}[1h]))
+        ) / (1 - 0.995) > 10
+      for: 5m
+      labels:
+        severity: critical
+        component: slo
+      annotations:
+        summary: "CRITICAL: Error budget burning at {{ $value | humanize }}x normal rate"
+        description: |
+          The error budget for voting-app is being consumed at {{ $value | humanize }}x the normal rate.
+          At this rate, the monthly error budget will be exhausted in {{ printf "%.1f" (30 / .Value) }} days.
+          
+          Current error rate: {{ printf "%.2f" (.Value * 0.005 * 100) }}%
+          Threshold (10x): 5.0%
+          
+          Action Required:
+          - Check for recent deployments or config changes
+          - Review error logs in Kibana
+          - Consider rollback if issue persists
+          
+          Runbook: https://runbooks.prometheus.io/error-budget-burn
+        
+    - alert: ErrorBudgetBurnRateWarning
+      expr: |
+        (
+          sum(rate(http_requests_total{namespace="voting-app",status=~"5.."}[6h]))
+          /
+          sum(rate(http_requests_total{namespace="voting-app"}[6h]))
+        ) / (1 - 0.995) > 3
+      for: 15m
+      labels:
+        severity: warning
+        component: slo
+      annotations:
+        summary: "WARNING: Elevated error budget burn rate ({{ $value | humanize }}x)"
+        description: |
+          Error budget consumption is {{ $value | humanize }}x higher than expected.
+          Monthly budget will be exhausted in ~{{ printf "%.0f" (30 / .Value) }} days if this continues.
+          
+          Current 6h error rate: {{ printf "%.2f" (.Value * 0.005 * 100) }}%
+          Expected: < 1.5%
+          
+          Next Steps:
+          - Monitor trend in Grafana
+          - Check for degraded dependencies (Redis, PostgreSQL)
+          - Review application logs
+
+    - alert: HighLatencyP95
+      expr: |
+        histogram_quantile(0.95, 
+          sum(rate(http_request_duration_seconds_bucket{namespace="voting-app"}[5m])) by (le, service)
+        ) > 1
+      for: 10m
+      labels:
+        severity: warning
+        component: latency
+      annotations:
+        summary: "P95 latency exceeds 1s SLO for {{ $labels.service }}"
+        description: |
+          The 95th percentile response time for {{ $labels.service }} is {{ printf "%.2f" $value }}s.
+          SLO threshold: 1.0s
+          
+          Impact:
+          - Degraded user experience
+          - Potential timeout issues
+          
+          Investigation:
+          - Check CPU/Memory utilization
+          - Review database query performance
+          - Check network latency
+          - Look for slow queries in Jaeger traces
+
+    - alert: HighLatencyP99
+      expr: |
+        histogram_quantile(0.99, 
+          sum(rate(http_request_duration_seconds_bucket{namespace="voting-app"}[5m])) by (le, service)
+        ) > 3
+      for: 5m
+      labels:
+        severity: critical
+        component: latency
+      annotations:
+        summary: "CRITICAL: P99 latency exceeds 3s for {{ $labels.service }}"
+        description: |
+          Tail latency (P99) for {{ $labels.service }} is {{ printf "%.2f" $value }}s.
+          Critical threshold: 3.0s
+          
+          This affects 1% of users with severely degraded experience.
+          
+          Immediate Actions:
+          - Scale up replicas if resource-constrained
+          - Check for database connection pool exhaustion
+          - Review recent code changes
+          - Analyze distributed traces in Jaeger
+
+    - alert: QueueBackup
+      expr: redis_queue_length{namespace="voting-app"} > 100
+      for: 5m
+      labels:
+        severity: warning
+        component: worker
+      annotations:
+        summary: "Vote processing queue backing up ({{ $value }} votes pending)"
+        description: |
+          Redis queue has {{ $value }} unprocessed votes.
+          Threshold: 100 votes
+          
+          Possible causes:
+          - Worker service scaled down or crashed
+          - Database performance issues
+          - Sudden traffic spike
+          
+          Actions:
+          - Check worker pod status: kubectl get pods -n voting-app -l app=worker
+          - Review worker logs for errors
+          - Consider scaling worker replicas
+          - Check PostgreSQL connection availability
+
+    - alert: HighErrorRate
+      expr: |
+        (
+          sum(rate(http_requests_total{namespace="voting-app",status=~"5.."}[5m]))
+          /
+          sum(rate(http_requests_total{namespace="voting-app"}[5m]))
+        ) * 100 > 1
+      for: 5m
+      labels:
+        severity: warning
+        component: errors
+      annotations:
+        summary: "Error rate is {{ printf \"%.2f\" $value }}% (threshold: 1%)"
+        description: |
+          HTTP 5xx error rate across voting-app services is {{ printf "%.2f" $value }}%.
+          Expected: < 0.5%
+          
+          Impact on SLO:
+          - Consuming error budget faster than planned
+          - May trigger critical burn rate alert soon
+          
+          Debug Steps:
+          1. Check error logs: kubectl logs -n voting-app -l app=vote --tail=100 | grep ERROR
+          2. Review Grafana dashboards for affected services
+          3. Check Redis/PostgreSQL connectivity
+          4. Inspect failed requests in Jaeger
+
+    - alert: ServiceDown
+      expr: up{namespace="voting-app"} == 0
+      for: 2m
+      labels:
+        severity: critical
+        component: availability
+      annotations:
+        summary: "Service {{ $labels.job }} is DOWN"
+        description: |
+          Prometheus cannot scrape {{ $labels.job }} service.
+          Instance: {{ $labels.instance }}
+          
+          This indicates:
+          - Pod crash or restart loop
+          - Service endpoint misconfiguration
+          - Network connectivity issue
+          
+          Immediate Actions:
+          - kubectl get pods -n voting-app -l app={{ $labels.job }}
+          - kubectl describe pod <pod-name> -n voting-app
+          - kubectl logs <pod-name> -n voting-app --previous
+          - Check events: kubectl get events -n voting-app --sort-by='.lastTimestamp'
+
+    - alert: HighTrafficActivity
+      expr: rate(votes_total{namespace="voting-app"}[1m]) * 60 > 50
+      for: 10m
+      labels:
+        severity: info
+        component: traffic
+      annotations:
+        summary: "High voting activity detected ({{ printf \"%.0f\" $value }} votes/min)"
+        description: |
+          Unusually high voting rate: {{ printf "%.0f" $value }} votes/min.
+          Normal range: < 50 votes/min
+          
+          This might be:
+          - Legitimate traffic spike (e.g., marketing campaign)
+          - Load testing in progress
+          - Potential abuse/bot activity
+          
+          Monitoring:
+          - Watch for correlated latency increases
+          - Ensure auto-scaling policies are active
+          - Monitor database/cache performance
+          - Check error rates remain within SLO
+
+    - alert: DatabaseConnectionsHigh
+      expr: |
+        (db_connections_active{namespace="voting-app"} / 
+        (db_connections_active{namespace="voting-app"} + db_connections_idle{namespace="voting-app"})) * 100 > 80
+      for: 10m
+      labels:
+        severity: warning
+        component: database
+      annotations:
+        summary: "PostgreSQL connection pool utilization at {{ printf \"%.0f\" $value }}%"
+        description: |
+          Database connection pool is {{ printf "%.0f" $value }}% utilized.
+          Threshold: 80%
+          
+          Risk:
+          - Connection exhaustion
+          - Request queuing and timeouts
+          - Service degradation
+          
+          Actions:
+          - Review connection pool configuration
+          - Check for connection leaks
+          - Consider increasing max_connections
+          - Scale result/worker replicas if needed
+
+  - name: voting-app-recording-rules
+    interval: 30s
+    rules:
+    # Recording rules for faster dashboard queries
+    
+    - record: voting_app:availability:30d
+      expr: |
+        100 - (
+          sum(rate(http_requests_total{namespace="voting-app",status=~"5.."}[30d]))
+          /
+          sum(rate(http_requests_total{namespace="voting-app"}[30d]))
+        ) * 100
+    
+    - record: voting_app:error_budget_remaining:30d
+      expr: |
+        (
+          (1 - (sum(rate(http_requests_total{namespace="voting-app",status=~"5.."}[30d])) 
+                / sum(rate(http_requests_total{namespace="voting-app"}[30d]))))
+          - 0.995
+        ) / (1 - 0.995) * 100
+    
+    - record: voting_app:request_rate:1m
+      expr: sum(rate(http_requests_total{namespace="voting-app"}[1m])) by (service)
+    
+    - record: voting_app:error_rate:5m
+      expr: |
+        sum(rate(http_requests_total{namespace="voting-app",status=~"5.."}[5m])) by (service)
+        /
+        sum(rate(http_requests_total{namespace="voting-app"}[5m])) by (service)
+        * 100
+    
+    - record: voting_app:latency_p95:5m
+      expr: |
+        histogram_quantile(0.95,
+          sum(rate(http_request_duration_seconds_bucket{namespace="voting-app"}[5m])) by (le, service)
+        )
+    
+    - record: voting_app:latency_p99:5m
+      expr: |
+        histogram_quantile(0.99,
+          sum(rate(http_request_duration_seconds_bucket{namespace="voting-app"}[5m])) by (le, service)
+        )
